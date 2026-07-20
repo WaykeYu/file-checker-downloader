@@ -12,7 +12,8 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # 2. 設定目標網址清單與日期過濾條件
 URLS = [
     "https://url55.ctfile.com/d/172955-2339886-8818eb?p=197222&d=2339886&fk=16adba#/f/tempdir-VTVTY1dnCWhUYwJgU39TMAcyADRXYQszWzlYOwVpBD0AY1JlADtfNldnUSsDMwBlBT8FMFtuDj0JYVcxUzRRbw",
-    "https://url55.ctfile.com/d/172955-5565970-4df5fd?p=197222&d=5565970&fk=b89d4d#/f/tempdir-VjZQYFRkWzoBNgRmBysGZQ47U2cANgoyCGpRNVE8AT4FbFFuADIPb1pgA3lSYgRhDjQANVZjXG8AaARiB2UHMg"
+    "https://url55.ctfile.com/d/172955-5565970-4df5fd?p=197222&d=5565970&fk=b89d4d#/f/tempdir-VjZQYFRkWzoBNgRmBysGZQ47U2cANgoyCGpRNVE8AT4FbFFuADIPb1pgA3lSYgRhDjQANVZjXG8AaARiB2UHMg",
+    "https://url55.ctfile.com/d/172955-2339886-8818eb?p=197222&d=2339886&fk=16adba"
 ]
 
 TARGET_DATE = datetime(2026, 7, 17)
