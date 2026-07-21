@@ -40,7 +40,7 @@ def check_and_download():
             print(f"[{idx}/{len(URLS)}] 正在讀取網址: {url}")
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(5)  # 等待前端 AJAX 動態渲染
+                time.sleep(5)  # 等待前端動態渲染
 
                 # 嘗試讀取檔案列表項目
                 items = page.query_selector_all("tr, .file-list-item, .table-row, div.row")
@@ -50,7 +50,6 @@ def check_and_download():
                 candidates = []
                 for item in items:
                     text_content = item.inner_text()
-                    # 匹配日期格式 (YYYY-MM-DD 或 YYYY/MM/DD)
                     date_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})', text_content)
                     if date_match:
                         date_str = date_match.group(1).replace('/', '-')
@@ -65,13 +64,10 @@ def check_and_download():
                             continue
 
                 latest_target = None
-
                 if candidates:
-                    # 1. 優先比對日期：找出日期最新（最大）的項目
                     latest_target = max(candidates, key=lambda x: x["date"])
                     print(f"    [!] 成功比對到最新檔案 (更新日期: {latest_target['date_str']})")
                 elif items:
-                    # 2. 若無顯式日期標示，則退回預設取最後一個項目
                     latest_target = {"item": items[-1], "date_str": "未知/最新順序"}
                     print("    [!] 未偵測到明確日期格式，取列表中最後一個項目...")
 
@@ -80,15 +76,37 @@ def check_and_download():
                     link = item.query_selector("a")
                     
                     if link:
-                        with page.expect_download(timeout=60000) as download_info:
-                            link.click()
-                        download = download_info.value
+                        href = link.get_attribute("href")
+                        print(f"    [i] 進入檔案詳情頁面...")
+                        
+                        # 情況 A: 連結為完整或相對 URL，進入詳情頁
+                        if href:
+                            if href.startswith("/"):
+                                detail_url = f"https://url55.ctfile.com{href}"
+                            elif href.startswith("http"):
+                                detail_url = href
+                            else:
+                                detail_url = f"https://url55.ctfile.com/{href}"
+                            
+                            page.goto(detail_url, wait_until="domcontentloaded", timeout=60000)
+                            time.sleep(3)
 
-                        save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
-                        download.save_as(save_path)
-                        print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
+                        # 在詳情頁尋找「普通下載 / 免費下載」按鈕
+                        download_btn = page.query_selector("text=/普通下載|免費下載|Free Download/i") or page.query_selector("a.btn-free, .btn-primary, button")
+                        
+                        if download_btn:
+                            print("    [i] 找到下載按鈕，開始觸發下載...")
+                            with page.expect_download(timeout=60000) as download_info:
+                                download_btn.click()
+                            download = download_info.value
+
+                            save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
+                            download.save_as(save_path)
+                            print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
+                        else:
+                            print("    [X] 詳情頁中未找到下載按鈕。")
                     else:
-                        print("    [X] 未能在最新項目中找到下載連結。")
+                        print("    [X] 未能在最新項目中找到檔案連結。")
                 else:
                     print("    [-] 該頁面未找到任何檔案項目。")
 
