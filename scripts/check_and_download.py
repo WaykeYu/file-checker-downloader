@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-# 1. 定位專案根目錄與 downloads/ 資料夾
+# 1. 自動定位專案根目錄與 downloads/ 資料夾
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -26,7 +26,8 @@ def check_and_download():
             headless=True,
             args=[
                 "--disable-blink-features=AutomationControlled",
-                "--no-sandbox"
+                "--no-sandbox",
+                "--disable-popup-blocking"
             ]
         )
         context = browser.new_context(
@@ -42,7 +43,7 @@ def check_and_download():
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 time.sleep(5)  # 等待前端動態渲染
 
-                # 嘗試讀取檔案列表項目
+                # 讀取檔案列表項目
                 items = page.query_selector_all("tr, .file-list-item, .table-row, div.row")
                 if not items:
                     items = page.query_selector_all("div, li")
@@ -76,30 +77,34 @@ def check_and_download():
                     link = item.query_selector("a")
                     
                     if link:
-                        href = link.get_attribute("href")
-                        print(f"    [i] 進入檔案詳情頁面...")
+                        print("    [i] 嘗試開啟檔案詳情...")
                         
-                        # 情況 A: 連結為完整或相對 URL，進入詳情頁
-                        if href:
-                            if href.startswith("/"):
-                                detail_url = f"https://url55.ctfile.com{href}"
-                            elif href.startswith("http"):
-                                detail_url = href
-                            else:
-                                detail_url = f"https://url55.ctfile.com/{href}"
-                            
-                            page.goto(detail_url, wait_until="domcontentloaded", timeout=60000)
-                            time.sleep(3)
+                        # 處理點擊後可能開啟新分頁 (Popup) 的情況
+                        with context.expect_page(timeout=5000) as page_info:
+                            link.click(force=True)
+                        try:
+                            target_page = page_info.value
+                            target_page.wait_for_load_state("domcontentloaded")
+                        except Exception:
+                            # 若未開新分頁，則留在當前頁面
+                            target_page = page
 
-                        # 在詳情頁尋找「普通下載 / 免費下載」按鈕
-                        download_btn = page.query_selector("text=/普通下載|免費下載|Free Download/i") or page.query_selector("a.btn-free, .btn-primary, button")
-                        
+                        time.sleep(3)
+
+                        # 尋找「普通下載」按鈕
+                        download_btn = target_page.query_selector("text=/普通下載|免費下載|Free Download/i")
+                        if not download_btn:
+                            download_btn = target_page.query_selector(".btn-free, .btn-primary, button")
+
                         if download_btn:
-                            print("    [i] 找到下載按鈕，開始觸發下載...")
-                            with page.expect_download(timeout=60000) as download_info:
-                                download_btn.click()
+                            print("    [i] 找到下載按鈕，執行強制點擊觸發下載...")
+                            # 捲動至按鈕位置
+                            download_btn.scroll_into_view_if_needed()
+                            
+                            with target_page.expect_download(timeout=60000) as download_info:
+                                download_btn.click(force=True)  # force=True 繞過透明遮罩或蓋板
+                            
                             download = download_info.value
-
                             save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
                             download.save_as(save_path)
                             print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
