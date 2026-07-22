@@ -73,60 +73,61 @@ def check_and_download():
                     print("    [!] 未偵測到明確日期格式，取列表中最後一個項目...")
 
                 if latest_target:
-                    item = latest_target["item"]
-                    link = item.query_selector("a")
+                    item_element = latest_target["item"]
+                    print("    [i] 直接點擊該檔案項目...")
                     
-                    if link:
-                        print("    [i] 嘗試點擊開啟檔案詳情...")
-                        
-                        # 處理點擊後可能打開新分頁的情況
-                        with context.expect_page(timeout=5000) as page_info:
-                            link.click(force=True)
+                    # 監聽點擊後是否有新頁籤或直接跳轉
+                    with context.expect_page(timeout=5000) as page_info:
+                        item_element.click(force=True)
+                    try:
+                        target_page = page_info.value
+                        target_page.wait_for_load_state("domcontentloaded")
+                    except Exception:
+                        target_page = page
+
+                    time.sleep(4)
+
+                    # 在目前頁面或新頁面尋找下載按鈕
+                    download_locator = target_page.locator("a, button, div, span").filter(
+                        has_text=re.compile(r"普通下載|免費下載|Free Download|立即下載|下載", re.I)
+                    )
+
+                    count = download_locator.count()
+                    print(f"    [i] 找到 {count} 個潛在下載元素，尋找可見項...")
+
+                    target_btn = None
+                    for i in range(count):
+                        loc = download_locator.nth(i)
                         try:
-                            target_page = page_info.value
-                            target_page.wait_for_load_state("domcontentloaded")
-                        except Exception:
-                            target_page = page
-
-                        time.sleep(4)
-
-                        # 使用 Locator 尋找所有包含「下載」關鍵字的按鈕/連結
-                        download_locator = target_page.locator("a, button, div").filter(
-                            has_text=re.compile(r"普通下載|免費下載|Free Download|立即下載|下載", re.I)
-                        )
-
-                        count = download_locator.count()
-                        print(f"    [i] 找到 {count} 個潛在下載元素，尋找可見項...")
-
-                        target_btn = None
-                        for i in range(count):
-                            loc = download_locator.nth(i)
                             if loc.is_visible():
                                 target_btn = loc
                                 break
+                        except Exception:
+                            continue
 
-                        # 若抓不到，備用尋找 .btn 相關 class 且可見的元素
-                        if not target_btn:
-                            fallback_loc = target_page.locator(".btn-free, .btn-primary, .download-btn")
-                            for i in range(fallback_loc.count()):
-                                loc = fallback_loc.nth(i)
+                    # 備用按鈕尋找
+                    if not target_btn:
+                        fallback_loc = target_page.locator(".btn-free, .btn-primary, .download-btn, a[href*='down']")
+                        for i in range(fallback_loc.count()):
+                            loc = fallback_loc.nth(i)
+                            try:
                                 if loc.is_visible():
                                     target_btn = loc
                                     break
+                            except Exception:
+                                continue
 
-                        if target_btn:
-                            print("    [i] 找到可見的下載按鈕，執行下載...")
-                            with target_page.expect_download(timeout=60000) as download_info:
-                                target_btn.click(force=True)
-                            
-                            download = download_info.value
-                            save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
-                            download.save_as(save_path)
-                            print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
-                        else:
-                            print("    [X] 頁面中未找到可見的下載按鈕。")
+                    if target_btn:
+                        print("    [i] 找到可見的下載按鈕，執行下載...")
+                        with target_page.expect_download(timeout=60000) as download_info:
+                            target_btn.click(force=True)
+                        
+                        download = download_info.value
+                        save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
+                        download.save_as(save_path)
+                        print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
                     else:
-                        print("    [X] 未能在最新項目中找到檔案連結。")
+                        print("    [X] 頁面中未找到可見的下載按鈕。")
                 else:
                     print("    [-] 該頁面未找到任何檔案項目。")
 
