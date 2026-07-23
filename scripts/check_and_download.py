@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-# 1. 自動定位專案根目錄與 downloads/ 資料夾
+# 1. 定位專案根目錄與 downloads/ 資料夾
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -74,52 +74,35 @@ def check_and_download():
 
                 if latest_target:
                     item_element = latest_target["item"]
-                    print("    [i] 直接點擊該檔案項目...")
+                    print("    [i] 點擊檔案項目（於原頁面載入）...")
                     
-                    # 監聽點擊後是否有新頁籤或直接跳轉
-                    with context.expect_page(timeout=5000) as page_info:
-                        item_element.click(force=True)
-                    try:
-                        target_page = page_info.value
-                        target_page.wait_for_load_state("domcontentloaded")
-                    except Exception:
-                        target_page = page
+                    # 直接在原頁面點擊，不等待新分頁
+                    item_element.click(force=True)
+                    time.sleep(5)  # 等待進入詳情頁或內容刷新
 
-                    time.sleep(4)
-
-                    # 在目前頁面或新頁面尋找下載按鈕
-                    download_locator = target_page.locator("a, button, div, span").filter(
-                        has_text=re.compile(r"普通下載|免費下載|Free Download|立即下載|下載", re.I)
-                    )
-
-                    count = download_locator.count()
-                    print(f"    [i] 找到 {count} 個潛在下載元素，尋找可見項...")
-
+                    # 收集主頁面與所有 iframe 框架
+                    frames = [page] + page.frames
                     target_btn = None
-                    for i in range(count):
-                        loc = download_locator.nth(i)
+
+                    print(f"    [i] 正在掃描 {len(frames)} 個頁面框架 (Frames)...")
+                    for frame in frames:
                         try:
-                            if loc.is_visible():
-                                target_btn = loc
+                            locator = frame.locator("a, button, div, span").filter(
+                                has_text=re.compile(r"普通下載|免費下載|Free Download|立即下載|下載", re.I)
+                            )
+                            for i in range(locator.count()):
+                                loc = locator.nth(i)
+                                if loc.is_visible():
+                                    target_btn = loc
+                                    break
+                            if target_btn:
                                 break
                         except Exception:
                             continue
 
-                    # 備用按鈕尋找
-                    if not target_btn:
-                        fallback_loc = target_page.locator(".btn-free, .btn-primary, .download-btn, a[href*='down']")
-                        for i in range(fallback_loc.count()):
-                            loc = fallback_loc.nth(i)
-                            try:
-                                if loc.is_visible():
-                                    target_btn = loc
-                                    break
-                            except Exception:
-                                continue
-
                     if target_btn:
-                        print("    [i] 找到可見的下載按鈕，執行下載...")
-                        with target_page.expect_download(timeout=60000) as download_info:
+                        print("    [i] 成功找到可見的下載按鈕，執行下載...")
+                        with page.expect_download(timeout=60000) as download_info:
                             target_btn.click(force=True)
                         
                         download = download_info.value
@@ -127,7 +110,7 @@ def check_and_download():
                         download.save_as(save_path)
                         print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
                     else:
-                        print("    [X] 頁面中未找到可見的下載按鈕。")
+                        print("    [X] 所有框架中皆未找到可見的下載按鈕。")
                 else:
                     print("    [-] 該頁面未找到任何檔案項目。")
 
