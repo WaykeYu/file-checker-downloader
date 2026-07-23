@@ -74,21 +74,19 @@ def check_and_download():
 
                 if latest_target:
                     item_element = latest_target["item"]
-                    print("    [i] 點擊檔案項目（於原頁面載入）...")
-                    
-                    # 直接在原頁面點擊，不等待新分頁
+                    print("    [i] 點擊檔案項目...")
                     item_element.click(force=True)
-                    time.sleep(5)  # 等待進入詳情頁或內容刷新
+                    time.sleep(5)
 
                     # 收集主頁面與所有 iframe 框架
                     frames = [page] + page.frames
                     target_btn = None
 
-                    print(f"    [i] 正在掃描 {len(frames)} 個頁面框架 (Frames)...")
+                    # 策略 A: 文字導向尋找
                     for frame in frames:
                         try:
                             locator = frame.locator("a, button, div, span").filter(
-                                has_text=re.compile(r"普通下載|免費下載|Free Download|立即下載|下載", re.I)
+                                has_text=re.compile(r"普通|免費|下載|Free|Download", re.I)
                             )
                             for i in range(locator.count()):
                                 loc = locator.nth(i)
@@ -100,8 +98,31 @@ def check_and_download():
                         except Exception:
                             continue
 
+                    # 策略 B: 常見 Class/Selector 尋找
+                    if not target_btn:
+                        for frame in frames:
+                            try:
+                                css_selectors = [
+                                    ".btn-outline-primary", ".btn-primary", ".btn-free",
+                                    "a[href*='down']", "a[href*='file']", "button.btn",
+                                    "a.btn", ".download_btn", "#free_down_link"
+                                ]
+                                for sel in css_selectors:
+                                    locs = frame.locator(sel)
+                                    for i in range(locs.count()):
+                                        loc = locs.nth(i)
+                                        if loc.is_visible():
+                                            target_btn = loc
+                                            break
+                                    if target_btn:
+                                        break
+                            except Exception:
+                                continue
+                            if target_btn:
+                                break
+
                     if target_btn:
-                        print("    [i] 成功找到可見的下載按鈕，執行下載...")
+                        print("    [i] 成功找到可見的下載點，執行下載...")
                         with page.expect_download(timeout=60000) as download_info:
                             target_btn.click(force=True)
                         
