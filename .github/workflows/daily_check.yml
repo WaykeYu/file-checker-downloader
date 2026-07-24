@@ -5,6 +5,26 @@ on:
     # UTC 時間 00:00 = 台灣時間 08:00
     - cron: '0 0 * * *'
   workflow_dispatch: # 支援手動觸發測試
+# 新增此區塊以授予寫入權限
+permissions:
+  contents: write
+
+jobs:
+  download-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ... 其他執行步驟 (安裝與執行 python 腳本) ...
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Auto-download: File Checker & Downloader update" || echo "No changes to commit"
+          git push
 
 jobs:
   check-and-download:
