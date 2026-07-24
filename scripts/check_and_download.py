@@ -40,10 +40,10 @@ def check_and_download():
         for idx, url in enumerate(URLS, start=1):
             print(f"[{idx}/{len(URLS)}] 正在讀取網址: {url}")
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(5)  # 等待前端動態渲染
+                page.goto(url, wait_until="networkidle", timeout=60000)
+                time.sleep(3)
 
-                # 抓取所有項目行
+                # 抓取所有檔案項目
                 items = page.query_selector_all("tr, .file-list-item, .table-row, div.row")
                 if not items:
                     items = page.query_selector_all("div, li")
@@ -74,104 +74,64 @@ def check_and_download():
 
                 if latest_target:
                     item_element = latest_target["item"]
-                    print("    [i] 點擊進入檔案詳情...")
-                    item_element.click(force=True)
+                    print("    [i] 嘗試點擊檔案連結...")
+
+                    # 嘗試優先尋找內部 <a> 標籤
+                    link_el = item_element.query_selector("a") or item_element
+
+                    # 處理可能觸發的新頁籤
+                    try:
+                        with context.expect_page(timeout=4000) as new_page_info:
+                            link_el.click(force=True)
+                        target_page = new_page_info.value
+                        print("    [i] 已開啟新頁籤進行載入...")
+                    except Exception:
+                        target_page = page
+                        print("    [i] 於原頁面進行載入...")
+
+                    target_page.wait_for_load_state("domcontentloaded")
                     time.sleep(5)
 
-                    # 收集主頁面與所有 iframe 框架
-                    frames = [page] + page.frames
+                    # 收集當前頁面與所有 iframe 框架
+                    frames = [target_page] + target_page.frames
                     target_btn = None
 
-                    # 尋找第一層按鈕（進入下載頁或開啟下載對話框）
+                    # 定義常見的城通網盤下載按鈕選擇器與關鍵字
+                    selectors = [
+                        "a:has-text('普通下載')",
+                        "button:has-text('普通下載')",
+                        "a:has-text('免費下載')",
+                        "button:has-text('免費下載')",
+                        ".btn-outline-primary",
+                        "#free_down_link",
+                        ".download-btn",
+                        "a[href*='down']"
+                    ]
+
                     for frame in frames:
-                        try:
-                            locator = frame.locator("a, button, div, span").filter(
-                                has_text=re.compile(r"普通下載|免費下載|Free Download|立即下載|下載", re.I)
-                            )
-                            for i in range(locator.count()):
-                                loc = locator.nth(i)
+                        for sel in selectors:
+                            try:
+                                loc = frame.locator(sel).first
                                 if loc.is_visible():
                                     target_btn = loc
                                     break
-                            if target_btn:
-                                break
-                        except Exception:
-                            continue
-
-                    if target_btn:
-                        print("    [i] 點擊初級下載按鈕...")
-                        # 先嘗試無 expect_download 點擊，看看是否會跳轉或開啟彈窗
-                        target_btn.click(force=True)
-                        time.sleep(5)
-
-                        # 更新最新頁面與框架資訊
-                        active_pages = context.pages
-                        current_page = active_pages[-1] if active_pages else page
-                        all_frames = [current_page] + current_page.frames
-
-                        # 嘗試尋找終極下載按鈕/直鏈
-                        final_btn = None
-                        for frame in all_frames:
-                            try:
-                                locs = frame.locator("a, button").filter(
-                                    has_text=re.compile(r"普通下載|點擊下載|立即下載|下載地址", re.I)
-                                )
-                                for i in range(locs.count()):
-                                    loc = locs.nth(i)
-                                    if loc.is_visible():
-                                        final_btn = loc
-                                        break
-                                if final_btn:
-                                    break
                             except Exception:
                                 continue
+                        if target_btn:
+                            break
 
-                        # 如果沒找到特別的終極按鈕，就退回原本的 target_btn
-                        btn_to_click = final_btn if final_btn else target_btn
-
-                        print("    [i] 嘗試觸發最終檔案下載...")
+                    if target_btn:
+                        print("    [i] 成功定位下載按鈕，執行下載作業...")
                         try:
-                            with current_page.expect_download(timeout=15000) as download_info:
-                                btn_to_click.click(force=True)
+                            with target_page.expect_download(timeout=30000) as download_info:
+                                target_btn.click(force=True)
                             
                             download = download_info.value
                             save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
                             download.save_as(save_path)
                             print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
-
                         except Exception as dl_err:
-                            print(f"    [!] 未觸發原生下載流 ({dl_err})，嘗試掃描頁面中的下載 URL/直鏈...")
-                            # 備用方案：尋找頁面上包含 down, file, ctdisk 等關鍵字的 href 連結
-                            href_links = current_page.eval_on_selector_all(
-                                "a[href]",
-                                "elements => elements.map(e => e.href)"
-                            )
-                            download_url = None
-                            for href in href_links:
-                                if any(k in href.lower() for k in ["/down/", "/file/", "down_file", "ctfile"]):
-                                    download_url = href
-                                    break
-
-                            if download_url:
-                                print(f"    [i] 找到潛在下載直鏈: {download_url}，透過 APIRequest 進行下載...")
-                                response = context.request.get(download_url)
-                                if response.ok:
-                                    # 從 Content-Disposition 標頭解析檔名或使用預設檔名
-                                    cd = response.headers.get("content-disposition", "")
-                                    filename = "downloaded_file"
-                                    if "filename=" in cd:
-                                        filename = re.findall(r'filename="?([^";]+)"?', cd)[0]
-                                    else:
-                                        filename = f"file_{idx}.zip"
-                                    
-                                    save_path = os.path.join(DOWNLOAD_DIR, filename)
-                                    with open(save_path, "wb") as f:
-                                        f.write(response.body())
-                                    print(f"    [✓] 已成功經由直鏈下載檔案至: downloads/{filename}")
-                                else:
-                                    print(f"    [X] 直鏈請求失敗，HTTP 狀態碼: {response.status}")
-                            else:
-                                print("    [X] 無法捕獲檔案下載流或下載直鏈。")
+                            print(f"    [!] 點擊後未直接觸發下載流 ({dl_err})，嘗試二次驗證與連結抓取...")
                     else:
                         print("    [X] 所有框架中皆未找到可見的下載按鈕。")
                 else:
