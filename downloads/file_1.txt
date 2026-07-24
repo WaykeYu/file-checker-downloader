@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-icon-180x180.png" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>城通网盘 - 多达70TB的存储空间</title>
+    <script type="module" crossorigin src="/assets/index-CFi0TWD8.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-vendor-Cly8h-Fr.js">
+    <link rel="modulepreload" crossorigin href="/assets/account-pages-fpeRHpvc.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DxLJ0cyx.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
