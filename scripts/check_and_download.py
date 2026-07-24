@@ -40,8 +40,8 @@ def check_and_download():
         for idx, url in enumerate(URLS, start=1):
             print(f"[{idx}/{len(URLS)}] 正在讀取網址: {url}")
             try:
-                page.goto(url, wait_until="networkidle", timeout=60000)
-                time.sleep(3)
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                time.sleep(4)
 
                 # 抓取所有檔案項目
                 items = page.query_selector_all("tr, .file-list-item, .table-row, div.row")
@@ -76,54 +76,72 @@ def check_and_download():
                     item_element = latest_target["item"]
                     print("    [i] 嘗試點擊檔案連結...")
 
-                    # 嘗試優先尋找內部 <a> 標籤
                     link_el = item_element.query_selector("a") or item_element
 
-                    # 處理可能觸發的新頁籤
                     try:
-                        with context.expect_page(timeout=4000) as new_page_info:
+                        with context.expect_page(timeout=5000) as new_page_info:
                             link_el.click(force=True)
                         target_page = new_page_info.value
-                        print("    [i] 已開啟新頁籤進行載入...")
+                        print("    [i] 已開啟新頁籤，等待內容完全加載...")
                     except Exception:
                         target_page = page
-                        print("    [i] 於原頁面進行載入...")
+                        print("    [i] 於原頁面進行加載...")
 
-                    target_page.wait_for_load_state("domcontentloaded")
-                    time.sleep(5)
+                    # 充分等待新頁籤的網絡發送與 DOM 渲染完成
+                    try:
+                        target_page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                    time.sleep(6)
 
                     # 收集當前頁面與所有 iframe 框架
                     frames = [target_page] + target_page.frames
                     target_btn = None
 
-                    # 定義常見的城通網盤下載按鈕選擇器與關鍵字
-                    selectors = [
-                        "a:has-text('普通下載')",
-                        "button:has-text('普通下載')",
-                        "a:has-text('免費下載')",
-                        "button:has-text('免費下載')",
-                        ".btn-outline-primary",
-                        "#free_down_link",
-                        ".download-btn",
-                        "a[href*='down']"
-                    ]
-
+                    # 1. 精準文字匹配
+                    regex_pattern = re.compile(r"普通|免費|立即|下載|Free|Download", re.I)
                     for frame in frames:
-                        for sel in selectors:
-                            try:
-                                loc = frame.locator(sel).first
+                        try:
+                            locs = frame.locator("a, button, div, span").filter(has_text=regex_pattern)
+                            for i in range(locs.count()):
+                                loc = locs.nth(i)
                                 if loc.is_visible():
                                     target_btn = loc
                                     break
-                            except Exception:
-                                continue
-                        if target_btn:
-                            break
+                            if target_btn:
+                                break
+                        except Exception:
+                            continue
+
+                    # 2. 備用 Selector 匹配 (萬用 class/id 檢索)
+                    if not target_btn:
+                        css_list = [
+                            ".btn", "a.btn", "button",
+                            "[class*='down']", "[id*='down']",
+                            "[class*='btn']", "[id*='btn']"
+                        ]
+                        for frame in frames:
+                            for css in css_list:
+                                try:
+                                    locs = frame.locator(css)
+                                    for i in range(locs.count()):
+                                        loc = locs.nth(i)
+                                        if loc.is_visible() and len(loc.inner_text().strip()) > 0:
+                                            target_btn = loc
+                                            break
+                                    if target_btn:
+                                        break
+                                except Exception:
+                                    continue
+                            if target_btn:
+                                break
 
                     if target_btn:
-                        print("    [i] 成功定位下載按鈕，執行下載作業...")
+                        btn_text = target_btn.inner_text().replace('\n', ' ').strip()
+                        print(f"    [i] 成功定位下載按鈕/元素 [{btn_text}]，執行點擊...")
+                        
                         try:
-                            with target_page.expect_download(timeout=30000) as download_info:
+                            with target_page.expect_download(timeout=20000) as download_info:
                                 target_btn.click(force=True)
                             
                             download = download_info.value
@@ -131,9 +149,14 @@ def check_and_download():
                             download.save_as(save_path)
                             print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
                         except Exception as dl_err:
-                            print(f"    [!] 點擊後未直接觸發下載流 ({dl_err})，嘗試二次驗證與連結抓取...")
+                            print(f"    [!] 點擊未觸發直接下載流 ({dl_err})，拍攝當前畫面...")
+                            screenshot_path = os.path.join(BASE_DIR, f"error_url_{idx}.png")
+                            target_page.screenshot(path=screenshot_path)
                     else:
                         print("    [X] 所有框架中皆未找到可見的下載按鈕。")
+                        screenshot_path = os.path.join(BASE_DIR, f"error_url_{idx}.png")
+                        target_page.screenshot(path=screenshot_path)
+                        print(f"    [i] 已將新頁籤畫面存為截圖: {screenshot_path}")
                 else:
                     print("    [-] 該頁面未找到任何檔案項目。")
 
