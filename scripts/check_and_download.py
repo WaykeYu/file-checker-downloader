@@ -82,81 +82,94 @@ def check_and_download():
                         with context.expect_page(timeout=5000) as new_page_info:
                             link_el.click(force=True)
                         target_page = new_page_info.value
-                        print("    [i] 已開啟新頁籤，等待內容完全加載...")
+                        print("    [i] 已開啟新頁籤...")
                     except Exception:
                         target_page = page
                         print("    [i] 於原頁面進行加載...")
 
-                    # 充分等待新頁籤的網絡發送與 DOM 渲染完成
-                    try:
-                        target_page.wait_for_load_state("networkidle", timeout=10000)
-                    except Exception:
-                        pass
-                    time.sleep(6)
+                    target_page.wait_for_load_state("domcontentloaded")
+                    time.sleep(5)
 
                     # 收集當前頁面與所有 iframe 框架
                     frames = [target_page] + target_page.frames
                     target_btn = None
 
-                    # 1. 精準文字匹配
-                    regex_pattern = re.compile(r"普通|免費|立即|下載|Free|Download", re.I)
-                    for frame in frames:
-                        try:
-                            locs = frame.locator("a, button, div, span").filter(has_text=regex_pattern)
-                            for i in range(locs.count()):
-                                loc = locs.nth(i)
-                                if loc.is_visible():
-                                    target_btn = loc
-                                    break
-                            if target_btn:
-                                break
-                        except Exception:
-                            continue
+                    # 關鍵字清單（包含英文與中文）
+                    btn_keywords = [
+                        "Slow download", "Slow", "Free download", 
+                        "普通下載", "免費下載", "普通下载", "免费下载"
+                    ]
 
-                    # 2. 備用 Selector 匹配 (萬用 class/id 檢索)
-                    if not target_btn:
-                        css_list = [
-                            ".btn", "a.btn", "button",
-                            "[class*='down']", "[id*='down']",
-                            "[class*='btn']", "[id*='btn']"
-                        ]
-                        for frame in frames:
-                            for css in css_list:
-                                try:
-                                    locs = frame.locator(css)
-                                    for i in range(locs.count()):
-                                        loc = locs.nth(i)
-                                        if loc.is_visible() and len(loc.inner_text().strip()) > 0:
-                                            target_btn = loc
-                                            break
-                                    if target_btn:
+                    # 尋找具體按鈕，限制 inner_text 長度避免選中整頁容器
+                    for frame in frames:
+                        for kw in btn_keywords:
+                            try:
+                                locs = frame.locator(f"a:has-text('{kw}'), button:has-text('{kw}'), div:has-text('{kw}'), span:has-text('{kw}')")
+                                for i in range(locs.count()):
+                                    loc = locs.nth(i)
+                                    text = loc.inner_text().strip()
+                                    # 只接受精準短文字按鈕 (小於 40 字元)
+                                    if loc.is_visible() and 0 < len(text) < 40:
+                                        target_btn = loc
                                         break
-                                except Exception:
-                                    continue
-                            if target_btn:
-                                break
+                                if target_btn:
+                                    break
+                            except Exception:
+                                continue
+                        if target_btn:
+                            break
 
                     if target_btn:
                         btn_text = target_btn.inner_text().replace('\n', ' ').strip()
-                        print(f"    [i] 成功定位下載按鈕/元素 [{btn_text}]，執行點擊...")
+                        print(f"    [i] 成功精準定位下載按鈕: [{btn_text}]，執行下載...")
                         
                         try:
-                            with target_page.expect_download(timeout=20000) as download_info:
+                            # 觸發下載
+                            with target_page.expect_download(timeout=30000) as download_info:
                                 target_btn.click(force=True)
                             
                             download = download_info.value
                             save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
                             download.save_as(save_path)
                             print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
+
                         except Exception as dl_err:
-                            print(f"    [!] 點擊未觸發直接下載流 ({dl_err})，拍攝當前畫面...")
-                            screenshot_path = os.path.join(BASE_DIR, f"error_url_{idx}.png")
-                            target_page.screenshot(path=screenshot_path)
+                            print(f"    [!] 點擊後未直接觸發原生下載 ({dl_err})，檢查是否有彈出確認按鈕...")
+                            time.sleep(3)
+                            
+                            # 若點擊 Slow download 後彈出對話框，二次尋找確定按鈕
+                            confirm_btn = None
+                            for frame in frames:
+                                try:
+                                    locs = frame.locator("a, button").filter(has_text=re.compile(r"Download|下載|確定|Confirm", re.I))
+                                    for i in range(locs.count()):
+                                        loc = locs.nth(i)
+                                        text = loc.inner_text().strip()
+                                        if loc.is_visible() and 0 < len(text) < 30:
+                                            confirm_btn = loc
+                                            break
+                                    if confirm_btn:
+                                        break
+                                except Exception:
+                                    continue
+
+                            if confirm_btn:
+                                print("    [i] 找到彈窗確認按鈕，再次嘗試下載...")
+                                with target_page.expect_download(timeout=30000) as download_info:
+                                    confirm_btn.click(force=True)
+                                download = download_info.value
+                                save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
+                                download.save_as(save_path)
+                                print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
+                            else:
+                                screenshot_path = os.path.join(BASE_DIR, f"error_url_{idx}.png")
+                                target_page.screenshot(path=screenshot_path)
+                                print(f"    [i] 已將截圖存為: {screenshot_path}")
                     else:
-                        print("    [X] 所有框架中皆未找到可見的下載按鈕。")
+                        print("    [X] 所有框架中皆未找到合適的免費下載按鈕。")
                         screenshot_path = os.path.join(BASE_DIR, f"error_url_{idx}.png")
                         target_page.screenshot(path=screenshot_path)
-                        print(f"    [i] 已將新頁籤畫面存為截圖: {screenshot_path}")
+                        print(f"    [i] 已將畫面存為截圖: {screenshot_path}")
                 else:
                     print("    [-] 該頁面未找到任何檔案項目。")
 
