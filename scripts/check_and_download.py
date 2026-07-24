@@ -90,17 +90,14 @@ def check_and_download():
                     target_page.wait_for_load_state("domcontentloaded")
                     time.sleep(5)
 
-                    # 收集當前頁面與所有 iframe 框架
                     frames = [target_page] + target_page.frames
                     target_btn = None
 
-                    # 關鍵字清單（包含英文與中文）
                     btn_keywords = [
                         "Slow download", "Slow", "Free download", 
                         "普通下載", "免費下載", "普通下载", "免费下载"
                     ]
 
-                    # 尋找具體按鈕，限制 inner_text 長度避免選中整頁容器
                     for frame in frames:
                         for kw in btn_keywords:
                             try:
@@ -108,7 +105,6 @@ def check_and_download():
                                 for i in range(locs.count()):
                                     loc = locs.nth(i)
                                     text = loc.inner_text().strip()
-                                    # 只接受精準短文字按鈕 (小於 40 字元)
                                     if loc.is_visible() and 0 < len(text) < 40:
                                         target_btn = loc
                                         break
@@ -121,50 +117,79 @@ def check_and_download():
 
                     if target_btn:
                         btn_text = target_btn.inner_text().replace('\n', ' ').strip()
-                        print(f"    [i] 成功精準定位下載按鈕: [{btn_text}]，執行下載...")
+                        print(f"    [i] 成功精準定位下載按鈕: [{btn_text}]，執行點擊...")
                         
-                        try:
-                            # 觸發下載
-                            with target_page.expect_download(timeout=30000) as download_info:
-                                target_btn.click(force=True)
-                            
-                            download = download_info.value
-                            save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
-                            download.save_as(save_path)
-                            print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
+                        target_btn.click(force=True)
+                        time.sleep(3)  # 等待彈窗或倒數觸發
 
-                        except Exception as dl_err:
-                            print(f"    [!] 點擊後未直接觸發原生下載 ({dl_err})，檢查是否有彈出確認按鈕...")
-                            time.sleep(3)
-                            
-                            # 若點擊 Slow download 後彈出對話框，二次尋找確定按鈕
-                            confirm_btn = None
-                            for frame in frames:
-                                try:
-                                    locs = frame.locator("a, button").filter(has_text=re.compile(r"Download|下載|確定|Confirm", re.I))
-                                    for i in range(locs.count()):
-                                        loc = locs.nth(i)
-                                        text = loc.inner_text().strip()
-                                        if loc.is_visible() and 0 < len(text) < 30:
-                                            confirm_btn = loc
-                                            break
-                                    if confirm_btn:
+                        # 尋找彈窗內的確認按鈕或最終下載按鈕
+                        confirm_btn = None
+                        for frame in frames:
+                            try:
+                                locs = frame.locator("a, button, div, span").filter(
+                                    has_text=re.compile(r"Slow Download|Download|下載|確定|Confirm|普通下載", re.I)
+                                )
+                                for i in range(locs.count()):
+                                    loc = locs.nth(i)
+                                    text = loc.inner_text().strip()
+                                    if loc.is_visible() and 0 < len(text) < 30:
+                                        confirm_btn = loc
                                         break
-                                except Exception:
-                                    continue
+                                if confirm_btn:
+                                    break
+                            except Exception:
+                                continue
 
-                            if confirm_btn:
-                                print("    [i] 找到彈窗確認按鈕，再次嘗試下載...")
-                                with target_page.expect_download(timeout=30000) as download_info:
-                                    confirm_btn.click(force=True)
-                                download = download_info.value
-                                save_path = os.path.join(DOWNLOAD_DIR, download.suggested_filename)
-                                download.save_as(save_path)
-                                print(f"    [✓] 已成功下載最新檔案至: downloads/{download.suggested_filename}")
+                        click_target = confirm_btn if confirm_btn else target_btn
+                        if confirm_btn:
+                            print(f"    [i] 找到彈窗/確認按鈕: [{confirm_btn.inner_text().strip()}]，點擊並等待倒數完成...")
+                            confirm_btn.click(force=True)
+
+                        # 城通網盤倒數計時緩衝 (4 秒倒數 + 2 秒安全餘裕)
+                        print("    [i] 等待免費下載倒數計時與請求觸發 (6 秒)...")
+                        time.sleep(6)
+
+                        # 嘗試捕捉 download 事件或擷取新生成的下載連結
+                        download_obj = None
+                        try:
+                            with target_page.expect_download(timeout=10000) as download_info:
+                                # 如果尚未觸發，再次點擊已經準備就緒的按鈕
+                                click_target.click(force=True)
+                            download_obj = download_info.value
+                        except Exception:
+                            pass
+
+                        if download_obj:
+                            save_path = os.path.join(DOWNLOAD_DIR, download_obj.suggested_filename)
+                            download_obj.save_as(save_path)
+                            print(f"    [✓] 已成功下載最新檔案至: downloads/{download_obj.suggested_filename}")
+                        else:
+                            print("    [!] 未觸發標準事件，嘗試掃描頁面中的動態下載連結...")
+                            hrefs = target_page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
+                            dl_url = None
+                            for href in hrefs:
+                                if any(k in href.lower() for k in ["/down/", "ctfile", "file_down", "d.ctfile"]):
+                                    dl_url = href
+                                    break
+
+                            if dl_url:
+                                print(f"    [i] 找到潛在下載網址: {dl_url}，發送請求直接下載...")
+                                res = context.request.get(dl_url)
+                                if res.ok:
+                                    cd = res.headers.get("content-disposition", "")
+                                    fname = f"file_{idx}.txt"
+                                    if "filename=" in cd:
+                                        fname = re.findall(r'filename="?([^";]+)"?', cd)[0]
+                                    save_path = os.path.join(DOWNLOAD_DIR, fname)
+                                    with open(save_path, "wb") as f:
+                                        f.write(res.body())
+                                    print(f"    [✓] 已成功通過直鏈下載至: downloads/{fname}")
+                                else:
+                                    print(f"    [X] 直鏈請求失敗 (HTTP {res.status})")
                             else:
                                 screenshot_path = os.path.join(BASE_DIR, f"error_url_{idx}.png")
                                 target_page.screenshot(path=screenshot_path)
-                                print(f"    [i] 已將截圖存為: {screenshot_path}")
+                                print(f"    [X] 無法抓取下載流，已存為截圖: {screenshot_path}")
                     else:
                         print("    [X] 所有框架中皆未找到合適的免費下載按鈕。")
                         screenshot_path = os.path.join(BASE_DIR, f"error_url_{idx}.png")
