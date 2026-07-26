@@ -17,7 +17,7 @@ URLS = [
 
 def check_and_download():
     print("=" * 60)
-    print(" File Checker & Downloader - Network Capture Version ")
+    print(" File Checker & Downloader - Real File Download Version ")
     print("=" * 60)
     print(f"[*] 下載目標目錄: {DOWNLOAD_DIR}\n")
 
@@ -38,42 +38,13 @@ def check_and_download():
 
         for idx, url in enumerate(URLS, start=1):
             page = context.new_page()
-            captured_files = []
-
-            # 監聽 Response，若捕捉到真正檔案發送則直接攔截儲存
-            def handle_response(response):
-                try:
-                    headers = response.headers
-                    content_disposition = headers.get("content-disposition", "")
-                    content_type = headers.get("content-type", "")
-                    
-                    # 判斷是否為檔案下載
-                    is_file = "attachment" in content_disposition or "text/plain" in content_type or "octet-stream" in content_type
-                    
-                    if is_file and response.status == 200:
-                        filename = f"downloaded_file_{idx}.txt"
-                        if "filename=" in content_disposition:
-                            matched = re.findall(r'filename="?([^";]+)"?', content_disposition)
-                            if matched:
-                                filename = matched[0]
-                        
-                        body = response.body()
-                        if len(body) > 100:  # 排除過小檔或錯誤頁
-                            save_path = os.path.join(DOWNLOAD_DIR, filename)
-                            with open(save_path, "wb") as f:
-                                f.write(body)
-                            captured_files.append((filename, len(body)))
-                except Exception:
-                    pass
-
-            page.on("response", handle_response)
-
             print(f"[{idx}/{len(URLS)}] 正在讀取網址: {url}")
+            
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(4)
+                time.sleep(3)
 
-                # 抓取項目
+                # 抓取項目列表並比對最新日期
                 items = page.query_selector_all("tr, .file-list-item, .table-row, div.row")
                 if not items:
                     items = page.query_selector_all("div, li")
@@ -105,58 +76,80 @@ def check_and_download():
                     item_element = latest_target["item"]
                     link_el = item_element.query_selector("a") or item_element
 
-                    # 點擊開啟詳情
+                    # 點擊開啟檔案下載主頁
                     try:
                         with context.expect_page(timeout=5000) as new_page_info:
                             link_el.click(force=True)
                         target_page = new_page_info.value
-                        target_page.on("response", handle_response)
                     except Exception:
                         target_page = page
 
                     target_page.wait_for_load_state("domcontentloaded")
-                    time.sleep(5)
+                    time.sleep(4)
 
-                    # 尋找免費下載按鈕 (Slow download)
-                    btn = target_page.locator("a, button, div").filter(
+                    # 定位免費下載按鈕 (Slow download / 普通下載)
+                    slow_btn = target_page.locator("a, button, div, span").filter(
                         has_text=re.compile(r"Slow download|普通下載|免費下載|普通下载", re.I)
                     ).first
 
-                    if btn.is_visible():
-                        print("    [i] 點擊 [Slow Download] 免費下載按鈕...")
-                        btn.click(force=True)
+                    if slow_btn.is_visible():
+                        print("    [i] 找到免費下載按鈕，準備觸發下載點擊...")
+
+                        # 設定下載監聽容器
+                        download_container = []
+
+                        def on_download(download):
+                            download_container.append(download)
+
+                        target_page.on("download", on_download)
+                        context.on("download", on_download)
+
+                        # 第一次點擊：觸發免費下載 modal 或倒數
+                        slow_btn.click(force=True)
                         time.sleep(3)
 
-                        # 檢查是否有二次彈窗按鈕
-                        confirm_btn = target_page.locator("a, button, div").filter(
-                            has_text=re.compile(r"Slow Download|Download|下載|確定|Confirm", re.I)
+                        # 檢查頁面中是否有跳出二次確認按鈕 (例如: Download / 確定下載)
+                        confirm_btn = target_page.locator("a, button, div, span").filter(
+                            has_text=re.compile(r"^Download$|^下載$|^Slow Download$|普通下載", re.I)
                         ).first
-                        
+
                         if confirm_btn.is_visible():
-                            print("    [i] 點擊彈窗確認按鈕...")
+                            print("    [i] 點擊二次彈窗下載確認按鈕...")
                             confirm_btn.click(force=True)
 
-                        # 等待倒數與網路封包傳輸完成
-                        print("    [i] 等待免費下載倒數 (8 秒)...")
-                        time.sleep(8)
+                        print("    [i] 等待伺服器產生真實檔案與下載倒數 (10 秒)...")
+                        
+                        # 循環等待下載事件觸發
+                        for _ in range(10):
+                            if download_container:
+                                break
+                            time.sleep(1)
 
-                        # 處理標準下載流 (Download event)
-                        if not captured_files:
-                            try:
-                                with target_page.expect_download(timeout=5000) as download_info:
-                                    confirm_btn.click(force=True)
-                                dl = download_info.value
-                                save_p = os.path.join(DOWNLOAD_DIR, dl.suggested_filename)
-                                dl.save_as(save_p)
-                                print(f"    [✓] 已通過原生下載捕捉至: downloads/{dl.suggested_filename}")
-                            except Exception:
-                                pass
+                        if download_container:
+                            dl = download_container[0]
+                            filename = dl.suggested_filename
+                            
+                            # 確保副檔名為 .txt
+                            if not filename.endswith(".txt"):
+                                filename = f"file_{idx}.txt"
 
-                        if captured_files:
-                            fname, fsize = captured_files[-1]
-                            print(f"    [✓] 成功攔截網路傳輸並儲存檔案: downloads/{fname} (大小: {fsize} bytes)")
+                            save_path = os.path.join(DOWNLOAD_DIR, filename)
+                            dl.save_as(save_path)
+
+                            # 驗證下載檔案大小與內容
+                            file_size = os.path.getsize(save_path)
+                            print(f"    [✓] 成功下載真實檔案: downloads/{filename} (大小: {file_size} bytes)")
+                            
+                            # 檢查下載的檔案是否為有效的接口內容 (非 HTML 網頁)
+                            with open(save_path, "r", encoding="utf-8", errors="ignore") as f:
+                                first_line = f.readline().strip()
+                                if "<html" in first_line.lower() or "<!doctype" in first_line.lower():
+                                    print("    [!] 警告: 下載到的內容為 HTML 網頁而非文本，儲存截圖進行排查...")
+                                    target_page.screenshot(path=os.path.join(BASE_DIR, f"error_url_{idx}.png"))
+                                else:
+                                    print(f"    [i] 檔案內容開頭預覽: {first_line[:60]}...")
                         else:
-                            print("    [X] 未能成功攔截檔案內容，拍下截圖備查...")
+                            print("    [X] 點擊後未能在預計時間內觸發檔案下載流，截圖備查...")
                             target_page.screenshot(path=os.path.join(BASE_DIR, f"error_url_{idx}.png"))
                     else:
                         print("    [X] 未定位到免費下載按鈕")
