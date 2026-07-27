@@ -13,11 +13,11 @@ URLS = [
     "https://url55.ctfile.com/d/172955-5565970-4df5fd?p=197222&d=5565970&fk=b89d4d"
 ]
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB Limit
 
 def check_and_download():
     print("=" * 60)
-    print(" File Checker & Downloader - API & Pop-up Handling ")
+    print(" File Checker & Downloader - DataTables Optimized ")
     print("=" * 60)
     print(f"[*] 下載目標目錄: {DOWNLOAD_DIR}\n")
 
@@ -36,7 +36,6 @@ def check_and_download():
             accept_downloads=True
         )
 
-        # 全局下載事件監聽
         download_events = []
         captured_direct_urls = []
 
@@ -46,12 +45,10 @@ def check_and_download():
         def handle_response(response):
             try:
                 res_url = response.url
-                # 攔截包含下載直鏈或檔案內容的 API 響應
                 if any(k in res_url for k in ["ctfile.com", "down", "file", "get_file"]):
                     ct = response.headers.get("content-type", "")
                     if "text" in ct or "json" in ct or "octet-stream" in ct:
                         body_text = response.text()
-                        # 自動搜尋返回內容中的真實 CDN 下載 URL
                         urls = re.findall(r'https?://[^\s"\']+\.ctfile\.com[^\s"\']*', body_text)
                         for u in urls:
                             clean_u = u.replace('\\/', '/')
@@ -61,13 +58,10 @@ def check_and_download():
                 pass
 
         context.on("download", handle_download)
-        
-        # 當跳出 Popup/新分頁時，也幫它掛上 Response 與 Download 監聽
-        def handle_new_page(new_page):
-            new_page.on("download", handle_download)
+        context.on("page", lambda new_page: (
+            new_page.on("download", handle_download),
             new_page.on("response", handle_response)
-
-        context.on("page", handle_new_page)
+        ))
 
         for idx, url in enumerate(URLS, start=1):
             download_events.clear()
@@ -81,8 +75,8 @@ def check_and_download():
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 time.sleep(4)
 
-                # 比對最新項目
-                items = page.query_selector_all("tr, .file-list-item, .table-row, div.row, li, .file-item")
+                # 專針對 DataTables 結構優化的 DOM 選擇器
+                items = page.query_selector_all("table.dataTable tbody tr, .file-list-item, tr")
                 candidates = []
                 for item in items:
                     text_content = item.inner_text()
@@ -103,9 +97,9 @@ def check_and_download():
                 latest_target = max(candidates, key=lambda x: x["date"]) if candidates else None
                 
                 if not latest_target:
-                    link_first = page.query_selector("a[href*='/file/'], a[href*='/f/'], td a, .file-name a")
+                    link_first = page.query_selector("table.dataTable tbody tr td a, a[href*='/file/'], a[href*='/f/']")
                     if link_first:
-                        latest_target = {"item": link_first, "date_str": "預設第一筆項目"}
+                        latest_target = {"item": link_first, "date_str": "DataTables 預設第一筆"}
 
                 if latest_target:
                     item_element = latest_target["item"]
@@ -148,7 +142,6 @@ def check_and_download():
                         print("    [i] 等待倒數與按鈕狀態更新 (6 秒)...")
                         time.sleep(6)
 
-                        # 倒數結束後，嘗試多重點擊二次下載按鈕
                         for frame in all_frames:
                             try:
                                 final_btns = frame.locator("a, button, div, span").filter(
@@ -162,7 +155,6 @@ def check_and_download():
                             except Exception:
                                 continue
 
-                        # 再次點擊原本按鈕觸發下載流程
                         try:
                             slow_btn.click(force=True)
                         except Exception:
@@ -173,7 +165,6 @@ def check_and_download():
 
                         success = False
                         
-                        # 方案 A: Playwright 捕獲原生 Download 事件
                         if download_events:
                             dl = download_events[0]
                             suggested_name = dl.suggested_filename
@@ -190,7 +181,6 @@ def check_and_download():
                                     print(f"    [X] 檔案容量超過限制，已刪除 ({file_size/(1024*1024):.2f}MB)")
                                     os.remove(save_path)
 
-                        # 方案 B: 使用 API 捕捉到的直鏈下載
                         if not success and captured_direct_urls:
                             print(f"    [i] 嘗試使用背景捕捉到的 API 直鏈發送下載請求...")
                             for direct_url in captured_direct_urls:
