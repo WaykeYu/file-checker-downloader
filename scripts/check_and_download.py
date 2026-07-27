@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-# 1. 定位專案目錄
+# 1. 定位專案目錄與下載目錄
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -44,10 +44,10 @@ def check_and_download():
             
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(3)
+                time.sleep(5)
 
-                # 比對最新項目
-                items = page.query_selector_all("tr, .file-list-item, .table-row, div.row, li")
+                # 嘗試多重選擇器抓取列表
+                items = page.query_selector_all("tr, .file-list-item, .table-row, div.row, li, .file-item")
                 candidates = []
                 for item in items:
                     text_content = item.inner_text()
@@ -65,11 +65,12 @@ def check_and_download():
                         except ValueError:
                             continue
 
-                latest_target = max(candidates, key=x["date"]) if candidates else None
+                latest_target = max(candidates, key=lambda x: x["date"]) if candidates else None
+                
                 if not latest_target:
-                    link_first = page.query_selector("a[href*='/file/'], a[href*='/f/']")
+                    link_first = page.query_selector("a[href*='/file/'], a[href*='/f/'], td a, .file-name a")
                     if link_first:
-                        latest_target = {"item": link_first, "date_str": "預設第一筆"}
+                        latest_target = {"item": link_first, "date_str": "預設第一筆項目"}
 
                 if latest_target:
                     item_element = latest_target["item"]
@@ -108,7 +109,7 @@ def check_and_download():
                         print("    [i] 觸發免費下載區域...")
                         slow_btn.click(force=True)
 
-                        # 核心改進：倒數等待
+                        # 等待倒數計時結束
                         print("    [i] 等待 6 秒倒數計時結束...")
                         time.sleep(6)
 
@@ -116,7 +117,7 @@ def check_and_download():
                         target_page.on("download", lambda d: download_events.append(d))
                         context.on("download", lambda d: download_events.append(d))
 
-                        # 倒數結束後，再次尋找真正的 Download 按鈕或直鏈
+                        # 倒數結束後，再次點擊 Download 按鈕
                         clicked_final = False
                         for frame in all_frames:
                             try:
@@ -136,7 +137,6 @@ def check_and_download():
                                 continue
 
                         if not clicked_final:
-                            # 嘗試再次點擊原本的 slow_btn (此時倒數可能已變為 Download)
                             print("    [i] 再次點擊主下載按鈕...")
                             slow_btn.click(force=True)
 
