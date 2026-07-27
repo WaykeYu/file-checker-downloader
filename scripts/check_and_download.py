@@ -4,12 +4,10 @@ import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-# 1. 定位專案目錄與下載目錄
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# 2. 目標網址
 URLS = [
     "https://url55.ctfile.com/d/172955-2339886-8818eb?p=197222&d=2339886&fk=16adba",
     "https://url55.ctfile.com/d/172955-5565970-4df5fd?p=197222&d=5565970&fk=b89d4d"
@@ -19,7 +17,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 def check_and_download():
     print("=" * 60)
-    print(" File Checker & Downloader - Countdown Handling Version ")
+    print(" File Checker & Downloader - API & Pop-up Handling ")
     print("=" * 60)
     print(f"[*] 下載目標目錄: {DOWNLOAD_DIR}\n")
 
@@ -38,15 +36,52 @@ def check_and_download():
             accept_downloads=True
         )
 
+        # 全局下載事件監聽
+        download_events = []
+        captured_direct_urls = []
+
+        def handle_download(dl):
+            download_events.append(dl)
+
+        def handle_response(response):
+            try:
+                res_url = response.url
+                # 攔截包含下載直鏈或檔案內容的 API 響應
+                if any(k in res_url for k in ["ctfile.com", "down", "file", "get_file"]):
+                    ct = response.headers.get("content-type", "")
+                    if "text" in ct or "json" in ct or "octet-stream" in ct:
+                        body_text = response.text()
+                        # 自動搜尋返回內容中的真實 CDN 下載 URL
+                        urls = re.findall(r'https?://[^\s"\']+\.ctfile\.com[^\s"\']*', body_text)
+                        for u in urls:
+                            clean_u = u.replace('\\/', '/')
+                            if clean_u not in captured_direct_urls:
+                                captured_direct_urls.append(clean_u)
+            except Exception:
+                pass
+
+        context.on("download", handle_download)
+        
+        # 當跳出 Popup/新分頁時，也幫它掛上 Response 與 Download 監聽
+        def handle_new_page(new_page):
+            new_page.on("download", handle_download)
+            new_page.on("response", handle_response)
+
+        context.on("page", handle_new_page)
+
         for idx, url in enumerate(URLS, start=1):
+            download_events.clear()
+            captured_direct_urls.clear()
+
             page = context.new_page()
+            page.on("response", handle_response)
             print(f"[{idx}/{len(URLS)}] 正在讀取網址: {url}")
             
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(5)
+                time.sleep(4)
 
-                # 嘗試多重選擇器抓取列表
+                # 比對最新項目
                 items = page.query_selector_all("tr, .file-list-item, .table-row, div.row, li, .file-item")
                 candidates = []
                 for item in items:
@@ -84,6 +119,7 @@ def check_and_download():
                         target_page = page
 
                     target_page.wait_for_load_state("domcontentloaded")
+                    target_page.on("response", handle_response)
                     time.sleep(4)
 
                     all_frames = [target_page] + target_page.frames
@@ -109,59 +145,72 @@ def check_and_download():
                         print("    [i] 觸發免費下載區域...")
                         slow_btn.click(force=True)
 
-                        # 等待倒數計時結束
-                        print("    [i] 等待 6 秒倒數計時結束...")
+                        print("    [i] 等待倒數與按鈕狀態更新 (6 秒)...")
                         time.sleep(6)
 
-                        download_events = []
-                        target_page.on("download", lambda d: download_events.append(d))
-                        context.on("download", lambda d: download_events.append(d))
-
-                        # 倒數結束後，再次點擊 Download 按鈕
-                        clicked_final = False
+                        # 倒數結束後，嘗試多重點擊二次下載按鈕
                         for frame in all_frames:
                             try:
-                                final_btns = frame.locator("a, button").filter(
+                                final_btns = frame.locator("a, button, div, span").filter(
                                     has_text=re.compile(r"^Download$|^普通下載$|^直接下載$|^下載$", re.I)
                                 )
                                 for i in range(final_btns.count()):
                                     fb = final_btns.nth(i)
                                     if fb.is_visible():
-                                        print("    [i] 點擊倒數結束後的真正下載按鈕...")
                                         fb.click(force=True)
-                                        clicked_final = True
-                                        break
-                                if clicked_final:
-                                    break
+                                        time.sleep(1)
                             except Exception:
                                 continue
 
-                        if not clicked_final:
-                            print("    [i] 再次點擊主下載按鈕...")
+                        # 再次點擊原本按鈕觸發下載流程
+                        try:
                             slow_btn.click(force=True)
+                        except Exception:
+                            pass
 
-                        print("    [i] 等待網絡下載流回應 (6 秒)...")
-                        time.sleep(6)
+                        print("    [i] 等待下載事件或直鏈回應 (8 秒)...")
+                        time.sleep(8)
 
+                        success = False
+                        
+                        # 方案 A: Playwright 捕獲原生 Download 事件
                         if download_events:
                             dl = download_events[0]
                             suggested_name = dl.suggested_filename
-                            
-                            if any(suggested_name.lower().endswith(ext) for ext in [".exe", ".dmg", ".apk", ".msi", ".zip"]):
-                                print(f"    [X] 拒絕非目標檔案格式: {suggested_name}")
-                            else:
+                            if not any(suggested_name.lower().endswith(ext) for ext in [".exe", ".dmg", ".apk", ".msi", ".zip"]):
                                 fname = suggested_name if (suggested_name.endswith(".txt") or suggested_name.endswith(".json")) else f"file_{idx}.txt"
                                 save_path = os.path.join(DOWNLOAD_DIR, fname)
                                 dl.save_as(save_path)
 
                                 file_size = os.path.getsize(save_path)
-                                if file_size > MAX_FILE_SIZE:
-                                    print(f"    [X] 檔案容量過大 ({file_size/(1024*1024):.2f}MB)，自動清除！")
-                                    os.remove(save_path)
+                                if file_size <= MAX_FILE_SIZE:
+                                    print(f"    [✓] 原生下載成功: downloads/{fname} ({file_size/1024:.2f} KB)")
+                                    success = True
                                 else:
-                                    print(f"    [✓] 成功取得目標檔案: downloads/{fname} ({file_size/1024:.2f} KB)")
-                        else:
-                            print("    [X] 倒數後點擊仍未發送下載流，截圖備查...")
+                                    print(f"    [X] 檔案容量超過限制，已刪除 ({file_size/(1024*1024):.2f}MB)")
+                                    os.remove(save_path)
+
+                        # 方案 B: 使用 API 捕捉到的直鏈下載
+                        if not success and captured_direct_urls:
+                            print(f"    [i] 嘗試使用背景捕捉到的 API 直鏈發送下載請求...")
+                            for direct_url in captured_direct_urls:
+                                try:
+                                    res = context.request.get(direct_url)
+                                    if res.ok:
+                                        body = res.body()
+                                        if 10 < len(body) <= MAX_FILE_SIZE:
+                                            fname = f"file_{idx}.txt"
+                                            save_path = os.path.join(DOWNLOAD_DIR, fname)
+                                            with open(save_path, "wb") as f:
+                                                f.write(body)
+                                            print(f"    [✓] API 直鏈請求成功: downloads/{fname} ({len(body)/1024:.2f} KB)")
+                                            success = True
+                                            break
+                                except Exception:
+                                    continue
+
+                        if not success:
+                            print("    [X] 未能成功獲取檔案內容，儲存截圖備查...")
                             target_page.screenshot(path=os.path.join(BASE_DIR, f"error_url_{idx}.png"))
                     else:
                         print("    [X] 未找到普通下載按鈕")
