@@ -1,168 +1,180 @@
-
-<!--
-	mitm.html is the lite "man in the middle"
-
-	This is only meant to signal the opener's messageChannel to
-	the service worker - when that is done this mitm can be closed
-    but it's better to keep it alive since this also stops the sw
-    from restarting
-
-	The service worker is capable of intercepting all request and fork their
-	own "fake" response - wish we are going to craft
-	when the worker then receives a stream then the worker will tell the opener
-	to open up a link that will start the download
--->
-<script>
-// This will prevent the sw from restarting
-let keepAlive = () => {
-  keepAlive = () => {}
-  var ping = location.href.substr(0, location.href.lastIndexOf('/')) + '/ping'
-  var interval = setInterval(() => {
-    if (sw) {
-      sw.postMessage('ping')
-    } else {
-      fetch(ping).then(res => res.text(!res.ok && clearInterval(interval)))
-    }
-  }, 10000)
+table.dataTable.dtr-inline.collapsed > tbody > tr > td.child,
+table.dataTable.dtr-inline.collapsed > tbody > tr > th.child,
+table.dataTable.dtr-inline.collapsed > tbody > tr > td.dataTables_empty {
+  cursor: default !important;
+}
+table.dataTable.dtr-inline.collapsed > tbody > tr > td.child:before,
+table.dataTable.dtr-inline.collapsed > tbody > tr > th.child:before,
+table.dataTable.dtr-inline.collapsed > tbody > tr > td.dataTables_empty:before {
+  display: none !important;
+}
+table.dataTable.dtr-inline.collapsed > tbody > tr[role="row"] > td:first-child,
+table.dataTable.dtr-inline.collapsed > tbody > tr[role="row"] > th:first-child {
+  position: relative;
+  padding-left: 30px;
+  cursor: pointer;
+}
+table.dataTable.dtr-inline.collapsed > tbody > tr[role="row"] > td:first-child:before,
+table.dataTable.dtr-inline.collapsed > tbody > tr[role="row"] > th:first-child:before {
+  top: 12px;
+  left: 4px;
+  height: 14px;
+  width: 14px;
+  display: block;
+  position: absolute;
+  color: white;
+  border: 2px solid white;
+  border-radius: 14px;
+  box-shadow: 0 0 3px #444;
+  box-sizing: content-box;
+  text-align: center;
+  text-indent: 0 !important;
+  font-family: 'Courier New', Courier, monospace;
+  line-height: 14px;
+  content: '+';
+  background-color: #0275d8;
+}
+table.dataTable.dtr-inline.collapsed > tbody > tr.parent > td:first-child:before,
+table.dataTable.dtr-inline.collapsed > tbody > tr.parent > th:first-child:before {
+  content: '-';
+  background-color: #d33333;
+}
+table.dataTable.dtr-inline.collapsed.compact > tbody > tr > td:first-child,
+table.dataTable.dtr-inline.collapsed.compact > tbody > tr > th:first-child {
+  padding-left: 27px;
+}
+table.dataTable.dtr-inline.collapsed.compact > tbody > tr > td:first-child:before,
+table.dataTable.dtr-inline.collapsed.compact > tbody > tr > th:first-child:before {
+  top: 5px;
+  left: 4px;
+  height: 14px;
+  width: 14px;
+  border-radius: 14px;
+  line-height: 14px;
+  text-indent: 3px;
+}
+table.dataTable.dtr-column > tbody > tr > td.control,
+table.dataTable.dtr-column > tbody > tr > th.control {
+  position: relative;
+  cursor: pointer;
+}
+table.dataTable.dtr-column > tbody > tr > td.control:before,
+table.dataTable.dtr-column > tbody > tr > th.control:before {
+  top: 50%;
+  left: 50%;
+  height: 16px;
+  width: 16px;
+  margin-top: -10px;
+  margin-left: -10px;
+  display: block;
+  position: absolute;
+  color: white;
+  border: 2px solid white;
+  border-radius: 14px;
+  box-shadow: 0 0 3px #444;
+  box-sizing: content-box;
+  text-align: center;
+  text-indent: 0 !important;
+  font-family: 'Courier New', Courier, monospace;
+  line-height: 14px;
+  content: '+';
+  background-color: #0275d8;
+}
+table.dataTable.dtr-column > tbody > tr.parent td.control:before,
+table.dataTable.dtr-column > tbody > tr.parent th.control:before {
+  content: '-';
+  background-color: #d33333;
+}
+table.dataTable > tbody > tr.child {
+  padding: 0.5em 1em;
+}
+table.dataTable > tbody > tr.child:hover {
+  background: transparent !important;
+}
+table.dataTable > tbody > tr.child ul.dtr-details {
+  display: inline-block;
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+}
+table.dataTable > tbody > tr.child ul.dtr-details > li {
+  border-bottom: 1px solid #efefef;
+  padding: 0.5em 0;
+}
+table.dataTable > tbody > tr.child ul.dtr-details > li:first-child {
+  padding-top: 0;
+}
+table.dataTable > tbody > tr.child ul.dtr-details > li:last-child {
+  border-bottom: none;
+}
+table.dataTable > tbody > tr.child span.dtr-title {
+  display: inline-block;
+  min-width: 75px;
+  font-weight: bold;
 }
 
-// message event is the first thing we need to setup a listner for
-// don't want the opener to do a random timeout - instead they can listen for
-// the ready event
-// but since we need to wait for the Service Worker registration, we store the
-// message for later
-let messages = []
-window.onmessage = evt => messages.push(evt)
-
-let sw = null
-let scope = ''
-
-function registerWorker() {
-  return navigator.serviceWorker.getRegistration('./').then(swReg => {
-    return swReg || navigator.serviceWorker.register('sw.js', { scope: './' })
-  }).then(swReg => {
-    const swRegTmp = swReg.installing || swReg.waiting
-
-    scope = swReg.scope
-
-    return (sw = swReg.active) || new Promise(resolve => {
-      swRegTmp.addEventListener('statechange', fn = () => {
-        if (swRegTmp.state === 'activated') {
-          swRegTmp.removeEventListener('statechange', fn)
-          sw = swReg.active
-          resolve()
-        }
-      })
-    })
-  })
+div.dtr-modal {
+  position: fixed;
+  box-sizing: border-box;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  z-index: 100;
+  padding: 10em 1em;
+}
+div.dtr-modal div.dtr-modal-display {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  width: 50%;
+  height: 50%;
+  overflow: auto;
+  margin: auto;
+  z-index: 102;
+  overflow: auto;
+  background-color: #f5f5f7;
+  border: 1px solid black;
+  border-radius: 0.5em;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+}
+div.dtr-modal div.dtr-modal-content {
+  position: relative;
+  padding: 1em;
+}
+div.dtr-modal div.dtr-modal-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #eaeaea;
+  background-color: #f9f9f9;
+  text-align: center;
+  border-radius: 3px;
+  cursor: pointer;
+  z-index: 12;
+}
+div.dtr-modal div.dtr-modal-close:hover {
+  background-color: #eaeaea;
+}
+div.dtr-modal div.dtr-modal-background {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 101;
+  background: rgba(0, 0, 0, 0.6);
 }
 
-// Now that we have the Service Worker registered we can process messages
-function onMessage (event) {
-  let { data, ports, origin } = event
-
-  // It's important to have a messageChannel, don't want to interfere
-  // with other simultaneous downloads
-  if (!ports || !ports.length) {
-    throw new TypeError("[StreamSaver] You didn't send a messageChannel")
+@media screen and (max-width: 767px) {
+  div.dtr-modal div.dtr-modal-display {
+    width: 95%;
   }
-
-  if (typeof data !== 'object') {
-    throw new TypeError("[StreamSaver] You didn't send a object")
-  }
-
-  // the default public service worker for StreamSaver is shared among others.
-  // so all download links needs to be prefixed to avoid any other conflict
-  data.origin = origin
-
-  // if we ever (in some feature versoin of streamsaver) would like to
-  // redirect back to the page of who initiated a http request
-  data.referrer = data.referrer || document.referrer || origin
-
-  // pass along version for possible backwards compatibility in sw.js
-  data.streamSaverVersion = new URLSearchParams(location.search).get('version')
-
-  if (data.streamSaverVersion === '1.2.0') {
-    console.warn('[StreamSaver] please update streamsaver')
-  }
-
-  /** @since v2.0.0 */
-  if (!data.headers) {
-    console.warn("[StreamSaver] pass `data.headers` that you would like to pass along to the service worker\nit should be a 2D array or a key/val object that fetch's Headers api accepts")
-  } else {
-    // test if it's correct
-    // should thorw a typeError if not
-    new Headers(data.headers)
-  }
-
-  /** @since v2.0.0 */
-  if (typeof data.filename === 'string') {
-    console.warn("[StreamSaver] You shouldn't send `data.filename` anymore. It should be included in the Content-Disposition header option")
-    // Do what File constructor do with fileNames
-    data.filename = data.filename.replace(/\//g, ':')
-  }
-
-  /** @since v2.0.0 */
-  if (data.size) {
-    console.warn("[StreamSaver] You shouldn't send `data.size` anymore. It should be included in the content-length header option")
-  }
-
-  /** @since v2.0.0 */
-  if (data.readableStream) {
-    console.warn("[StreamSaver] You should send the readableStream in the messageChannel, not throught mitm")
-  }
-
-  /** @since v2.0.0 */
-  if (!data.pathname) {
-    console.warn("[StreamSaver] Please send `data.pathname` (eg: /pictures/summer.jpg)")
-    data.pathname = Math.random().toString().slice(-6) + '/' + data.filename
-  }
-
-  // remove all leading slashes
-  data.pathname = data.pathname.replace(/^\/+/g, '')
-
-  // remove protocol
-  let org = origin.replace(/(^\w+:|^)\/\//, '')
-
-  // set the absolute pathname to the download url.
-  data.url = new URL(`${scope + org}/${data.pathname}`).toString()
-
-  if (!data.url.startsWith(`${scope + org}/`)) {
-    throw new TypeError('[StreamSaver] bad `data.pathname`')
-  }
-
-  // This sends the message data as well as transferring
-  // messageChannel.port2 to the service worker. The service worker can
-  // then use the transferred port to reply via postMessage(), which
-  // will in turn trigger the onmessage handler on messageChannel.port1.
-
-  const transferable = data.readableStream
-    ? [ ports[0], data.readableStream ]
-    : [ ports[0] ]
-
-  if (!(data.readableStream || data.transferringReadable)) {
-    keepAlive()
-  }
-
-  return sw.postMessage(data, transferable)
 }
-
-if (window.opener) {
-  // The opener can't listen to onload event, so we need to help em out!
-  // (telling them that we are ready to accept postMessage's)
-  window.opener.postMessage('StreamSaver::loadedPopup', '*')
+div.dtr-bs-modal table.table tr:first-child td {
+  border-top: none;
 }
-
-if (navigator.serviceWorker) {
-  registerWorker().then(() => {
-    window.onmessage = onMessage
-    messages.forEach(window.onmessage)
-  })
-}
-
-// FF v102 just started to supports transferable streams, but still needs to ping sw.js
-// even tough the service worker dose not have to do any kind of work and listen to any
-// messages... #305
-keepAlive()
-
-</script>
