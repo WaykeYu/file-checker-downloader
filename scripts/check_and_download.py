@@ -25,7 +25,7 @@ def is_valid_config_content(content):
 
 def check_and_download():
     print("=" * 60)
-    print(" File Checker & Downloader - Full Automation Dual-Click ")
+    print(" File Checker & Downloader - Playwright Dual-Click (JS Fixed) ")
     print("=" * 60)
     print(f"[*] 下載目標目錄: {DOWNLOAD_DIR}\n")
 
@@ -49,11 +49,10 @@ def check_and_download():
             page = context.new_page()
             captured_urls = []
 
-            # 監聽全局響應：只要包含 CDN 下載連結或 downurl 的 JSON 全部攔截
+            # 監聽全局響應
             def handle_response(response):
                 try:
                     res_url = response.url
-                    # 1. 攔截 JSON API 中的 downurl / url
                     if response.status == 200:
                         ct = response.headers.get("content-type", "").lower()
                         if "json" in ct or "javascript" in ct or "plain" in ct:
@@ -67,7 +66,6 @@ def check_and_download():
                             except Exception:
                                 pass
                     
-                    # 2. 直接捕捉向 ctfile CDN 發起的大檔案 GET/POST 請求
                     if (".ctfile." in res_url or "/down/" in res_url or "file" in res_url) and response.status in [200, 206]:
                         ct = response.headers.get("content-type", "").lower()
                         if "html" not in ct and "javascript" not in ct and "css" not in ct:
@@ -99,7 +97,6 @@ def check_and_download():
                 file_page = context.new_page()
                 file_page.on("response", handle_response)
                 
-                # 監聽可能觸發的原生下載事件
                 download_holder = []
                 file_page.on("download", lambda d: download_holder.append(d))
 
@@ -111,7 +108,7 @@ def check_and_download():
                 clicked_first = file_page.evaluate("""() => {
                     const btns = Array.from(document.querySelectorAll('a, button, div, span'));
                     for (let b of btns) {
-                        const txt = b.innerText || '';
+                        const txt = (b.innerText || '').trim();
                         if (/普通下載|免費下載|普通下载|Slow download/i.test(txt) && !/極速|客戶端|客户端/i.test(txt)) {
                             b.click();
                             return true;
@@ -124,18 +121,17 @@ def check_and_download():
                     print("    [i] 已觸發首次點擊，等待 12 秒城通倒數計時與彈窗...")
                     time.sleep(12)
 
-                # 4. 第二次點擊：等待倒數完成後出現的「直接下載 / 下載」
+                # 4. 第二次點擊：等待倒數完成後出現的「直接下載」按鈕 (修復 JS .trim() 語法)
                 print("    [i] 步驟 2: 點擊二次確認的「直接下載」按鈕...")
                 file_page.evaluate("""() => {
                     const btns = Array.from(document.querySelectorAll('a, button, div, span'));
                     for (let b of btns) {
-                        const txt = (b.innerText || '').strip();
+                        const txt = (b.innerText || '').trim();
                         if (/^直接下載$|^直接下载$|^下載$|^下载$|^Download$/i.test(txt)) {
                             b.click();
                             return true;
                         }
                     }
-                    // 備用：嘗試點擊頁面上所有含 downurl 的 <a> 標籤
                     const links = Array.from(document.querySelectorAll('a[href*="http"]'));
                     for (let l of links) {
                         if (/ctfile|down/i.test(l.href)) {
@@ -146,7 +142,7 @@ def check_and_download():
                 }""")
                 time.sleep(5)
 
-                # 5. 優先檢查是否觸發了原生 Playwright Download
+                # 5. 檢查是否觸發原生下載
                 success = False
                 if download_holder:
                     print("    [i] 觸發瀏覽器原生下載流程...")
@@ -160,7 +156,7 @@ def check_and_download():
                             print(f"    [✓] 原生下載成功！已儲存至: downloads/{fname}")
                             success = True
 
-                # 6. 若無原生下載，驗證捕捉到的 CDN 候選直鏈
+                # 6. 驗證捕捉到的 CDN 候選直鏈
                 if not success and captured_urls:
                     print(f"    [i] 捕捉到 {len(captured_urls)} 個候選直鏈，開始逐一拉取驗證...")
                     for cdn_url in captured_urls:
