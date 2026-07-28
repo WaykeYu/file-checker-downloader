@@ -1,10 +1,8 @@
 import os
 import re
-import time
 import json
 import requests
-from urllib.parse import parse_qs, urlparse
-from playwright.sync_api import sync_playwright
+from urllib.parse import urlparse, parse_qs
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
@@ -15,135 +13,124 @@ URLS = [
     "https://url55.ctfile.com/d/172955-5565970-4df5fd?p=197222&d=5565970&fk=b89d4d"
 ]
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://url55.ctfile.com/"
+}
 
-def is_valid_file_content(content):
-    """驗證內容是否為有效的直播介面/設定檔文字（非 HTML 網頁）"""
-    if not content or len(content) < 10 or len(content) > MAX_FILE_SIZE:
+def is_valid_content(content):
+    """確認下載到的內容是真實介面文字（非 HTML 網頁）"""
+    if not content or len(content) < 10:
         return False
     head = content[:500].decode("utf-8", errors="ignore").strip().lower()
-    if "<html" in head or "<!doctype" in head or "<head" in head or "404 not found" in head:
+    if "<html" in head or "<!doctype" in head or "404 not found" in head:
         return False
     return True
 
+def download_ctfile(url, idx):
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    parsed_url = urlparse(url)
+    qs = parse_qs(parsed_url.query)
+    passcode = qs.get("p", [""])[0]
+    folder_id = qs.get("d", [""])[0]
+
+    print(f"[{idx}/{len(URLS)}] 讀取城通連結 (Passcode: {passcode}, Folder: {folder_id})...")
+
+    # Step 1: 訪問主要入口頁面以拿取 Cookies & 頁面原始碼
+    resp = session.get(url, timeout=15)
+    html = resp.text
+
+    # 從頁面尋找 file_id, userid, chk 或 ajax 端點
+    file_ids = re.findall(r'file_id\s*[:=]\s*["\']?(\d+)["\']?', html)
+    uids = re.findall(r'uid\s*[:=]\s*["\']?(\d+)["\']?', html) or re.findall(r'userid\s*[:=]\s*["\']?(\d+)["\']?', html)
+    chks = re.findall(r'chk\s*[:=]\s*["\']?([a-f0-9]+)["\']?', html)
+
+    # 如果沒撈到 file_id，嘗試匹配鏈接格式
+    if not file_ids:
+        file_ids = re.findall(r'/file/172955-(\d+)', html) or re.findall(r'172955-(\d+)', url)
+
+    file_id = file_ids[0] if file_ids else folder_id
+    uid = uids[0] if uids else "172955"
+    chk = chks[0] if chks else ""
+
+    print(f"    [i] 解析到參數 -> File ID: {file_id}, UID: {uid}")
+
+    # Step 2: 發送 API 請求獲取直鏈
+    # 城通常見的 API 介面路徑組合
+    api_urls = [
+        f"https://url55.ctfile.com/ajax.php?action=get_file_url&uid={uid}&fid={file_id}&p={passcode}&chk={chk}",
+        f"https://webapi.ctfile.com/get_file_url.php?uid={uid}&fid={file_id}&p={passcode}",
+        f"https://url55.ctfile.com/get_file_url.php?uid={uid}&fid={file_id}&p={passcode}"
+    ]
+
+    direct_url = None
+
+    for api in api_urls:
+        try:
+            r = session.get(api, timeout=10)
+            if r.status_code == 200:
+                try:
+                    res_json = r.json()
+                    if res_json.get("code") == 200 or "downurl" in res_json or "file_url" in res_json:
+                        direct_url = res_json.get("downurl") or res_json.get("file_url")
+                        if direct_url:
+                            print("    [✓] 成功透過城通 API 換取直鏈！")
+                            break
+                except Exception:
+                    # 嘗試從純文字正文尋找 down.ctfile.com 網址
+                    urls = re.findall(r'https?://[^\s"\']+\.ctfile\.com[^\s"\']*', r.text)
+                    if urls:
+                        direct_url = urls[0].replace('\\/', '/')
+                        break
+        except Exception:
+            continue
+
+    # Step 3: 如果 API 沒拿到，嘗試從頁面中 regex 抓取硬編碼直鏈
+    if not direct_url:
+        page_urls = re.findall(r'https?://[^\s"\']+\.ctfile\.com/down/[^\s"\']*', html)
+        if page_urls:
+            direct_url = page_urls[0]
+
+    # Step 4: 下載並驗證檔案內容
+    if direct_url:
+        try:
+            print(f"    [i] 正在下載檔案正文...")
+            file_resp = session.get(direct_url, timeout=20)
+            if file_resp.status_code == 200 and is_valid_content(file_resp.content):
+                fname = f"file_{idx}.txt"
+                save_path = os.path.join(DOWNLOAD_DIR, fname)
+                with open(save_path, "wb") as f:
+                    f.write(file_resp.content)
+                size_kb = len(file_resp.content) / 1024
+                print(f"    [✓] 成功寫入檔案: downloads/{fname} ({size_kb:.2f} KB)")
+                return True
+            else:
+                print("    [X] 下載內容無效（為網頁原始碼或已失效）")
+        except Exception as e:
+            print(f"    [X] 下載發送失敗: {e}")
+    else:
+        print("    [X] 無法解析到有效的下載 API 直鏈")
+
+    return False
+
 def check_and_download():
     print("=" * 60)
-    print(" File Checker & Downloader - API Protocol Mode ")
+    print(" File Checker & Downloader - Pure API Request Mode ")
     print("=" * 60)
     print(f"[*] 下載目標目錄: {DOWNLOAD_DIR}\n")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-popup-blocking"
-            ]
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-        )
+    for idx, url in enumerate(URLS, start=1):
+        success = download_ctfile(url, idx)
+        if not success:
+            print("    [-] 該連結下載失敗。")
+        print("-" * 50)
 
-        for idx, url in enumerate(URLS, start=1):
-            print(f"[{idx}/{len(URLS)}] 正在讀取網址: {url}")
-            page = context.new_page()
-            captured_api_data = {}
-
-            # 監聽城通的所有 XHR / Fetch API 響應
-            def handle_response(response):
-                try:
-                    res_url = response.url
-                    if "get_file" in res_url or "file_info" in res_url or "ajax" in res_url or "guest_chk" in res_url:
-                        if response.status == 200:
-                            try:
-                                data = response.json()
-                                if isinstance(data, dict):
-                                    captured_api_data.update(data)
-                            except Exception:
-                                text = response.text()
-                                matches = re.findall(r'https?://[^\s"\']+\.ctfile\.com[^\s"\']*', text)
-                                if matches:
-                                    captured_api_data["direct_urls"] = matches
-                except Exception:
-                    pass
-
-            page.on("response", handle_response)
-
-            try:
-                # 載入頁面並自動注入跳過倒數的腳本
-                page.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                """)
-                page.goto(url, wait_until="networkidle", timeout=60000)
-                time.sleep(3)
-
-                # 嘗試自動點擊第一個可用的檔案項目
-                item_links = page.query_selector_all("table tbody tr a, .file-list-item a, a[href*='/file/'], a[href*='/f/']")
-                if item_links:
-                    item_links[0].click(force=True)
-                    time.sleep(3)
-
-                # 嘗試強制點擊免費下載區域
-                for frame in [page] + page.frames:
-                    try:
-                        slow_btns = frame.locator("a, button, div").filter(
-                            has_text=re.compile(r"Slow download|普通下載|免費下載|普通下载", re.I)
-                        )
-                        if slow_btns.count() > 0:
-                            slow_btns.first.click(force=True)
-                            break
-                    except Exception:
-                        continue
-
-                time.sleep(6) # 等待 6 秒網路 API 回應
-
-                success = False
-
-                # 優先檢查是否從 API 回應中抓到了真實直鏈 (code: 200, downurl/file_url)
-                direct_url = captured_api_data.get("downurl") or captured_api_data.get("file_url") or captured_api_data.get("url")
-                
-                urls_to_try = []
-                if direct_url:
-                    urls_to_try.append(direct_url)
-                if "direct_urls" in captured_api_data:
-                    urls_to_try.extend(captured_api_data["direct_urls"])
-
-                # 如果背景 API 被阻擋，嘗試直接解析頁面 DOM 裡可能藏有的直鏈變數
-                if not urls_to_try:
-                    content_text = page.content()
-                    found_urls = re.findall(r'https?://[^\s"\']+\.ctfile\.com/down/[^\s"\']*', content_text)
-                    urls_to_try.extend(found_urls)
-
-                for candidate_url in urls_to_try:
-                    clean_url = candidate_url.replace('\\/', '/')
-                    try:
-                        res = context.request.get(clean_url)
-                        if res.ok:
-                            body = res.body()
-                            if is_valid_file_content(body):
-                                fname = f"file_{idx}.txt"
-                                save_path = os.path.join(DOWNLOAD_DIR, fname)
-                                with open(save_path, "wb") as f:
-                                    f.write(body)
-                                print(f"    [✓] API 直鏈驗證成功！已儲存正項檔案: downloads/{fname} ({len(body)/1024:.2f} KB)")
-                                success = True
-                                break
-                    except Exception:
-                        continue
-
-                if not success:
-                    print("    [X] 未能下載到正確的檔案，可能觸發了城通網盤的圖形驗證碼 (CAPTCHA)。")
-                    page.screenshot(path=os.path.join(BASE_DIR, f"error_url_{idx}.png"))
-
-            except Exception as e:
-                print(f"    [X] 執行出錯: {e}")
-
-            page.close()
-            print("-" * 50)
-
-        browser.close()
-        print("\n[*] 任務執行完畢。")
+    print("\n[*] 任務執行完畢。")
 
 if __name__ == "__main__":
     check_and_download()
