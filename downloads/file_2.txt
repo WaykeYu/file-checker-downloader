@@ -1,49 +1,168 @@
 
-<a id="a-link"></a>
-<script charset="utf-8" src="https://g.alicdn.com/mtb/lib-windvane/3.0.6/windvane.js" crossorigin></script>
+<!--
+	mitm.html is the lite "man in the middle"
+
+	This is only meant to signal the opener's messageChannel to
+	the service worker - when that is done this mitm can be closed
+    but it's better to keep it alive since this also stops the sw
+    from restarting
+
+	The service worker is capable of intercepting all request and fork their
+	own "fake" response - wish we are going to craft
+	when the worker then receives a stream then the worker will tell the opener
+	to open up a link that will start the download
+-->
 <script>
-  localStorage.x5referer = window.location.href;
-  var link = document.getElementById("a-link");
-  var isMobile = navigator.userAgent.match(/.*(iPhone|iPad|Android|ios|SymbianOS|Windows Phone).*/i);
-  var isHarmony = navigator.userAgent.match(/ArkWeb/i);
-  var host = (isMobile || isHarmony) ? "https://login.m.taobao.com/login.htm?from=sm&ttid=h5@iframe&redirectURL=" : "https://login.taobao.com/member/login.jhtml?redirectURL=";
-  try {
-	var hostValue = window.location.host;
-	var parts = hostValue && hostValue.split('.');
-	var exp = new Date();
-	var maxAge = -100;
-	exp.setTime(exp.getTime() + maxAge);
-	var cookie = 'x5secdata=;maxAge=' + maxAge + ';expires=' + exp.toUTCString() + ';path=/;domain=.' + parts.slice(-2).join('.') + ';';
-	document.cookie = cookie;
-	document.cookie = cookie + 'Secure;SameSite=None';
-  } catch(e) {}
-  var jump = "https%3a%2f%2fitem.taobao.com:443/wow/z/app/tbpc/pc-detail-ssr-2025/home%2F_____tmd_____%2Fpage%2Flogin_jump%3Frand%3DS3WxGHAgAt756EpznwfNzJq2AFA2qBNla3j6EINUS8We9dazM_iKElp8DwVSHZUevpC41Bx7RzivXIj9RnZgdg%26_lgt_%3D693bf1101aed435fc335bbc4887ecde3___343980___ba5792080b665a796e21155d22d17d00___eaebc79cac1eb5d2f7d8b4595e00ec73344a42d5a0b8cf56539c823cd24ac06cf42c5e6b9d1da8d8130e201f9849b0997f0418a4de098dea749dafdfe0e6966472320b3927478d0faa500490975ba6d403e8e8ce287a5edcff689a7c95f43f619c6d536cfe8c62332c022d3bda061abe118969ca3aeb6e1971ce584a9d982be9ec124ba4ef32bb2b4938b3a33bab981723e4168b1e3193a2ba30fde17790e4190e9894bec1dee02be6c37439eaeaaf281cfee49449e900ac1c8f7acc2cdacde35829692f524e8aa836c9753b193cf7defd035ed85718cba868e8ba1a74ab6ecc4f577549a96e3db10daaf43b1b7c335af42c5e6b9d1da8d8130e201f9849b0997f0418a4de098dea749dafdfe0e6966472320b3927478d0faa500490975ba6d4ddb2b6c69588eb317386a772a14546df4de603b43929f1e19c0732370e8abe99d815335da42d7fb161fd014b686b43d4%26uuid%3D693bf1101aed435fc335bbc4887ecde3";
-  link.href = host + jump;
-  if (window.themis && window.WindVane && !isHarmony) {
-    window.WindVane.call('aluWVJSBridge', 'sdkLogin', {}, function(e) {
-  		window.addEventListener('pageshow', function(event) {
-        	if (event.persisted) {
-  				localStorage.x5referer = "";
-          		window.location.reload();
-        	}
-        });
-  		window.location.href = decodeURIComponent(jump);
-  	}, function(e) {
-  		console.log(e);
-  		history.go(-1);
-		setTimeout(function(){
-  			window.WindVane.call('WebAppInterface', 'pop', {}, function(e) {
-            }, function (e) {});
-  		}, 100);
-  	});
-  } else {
-  	link.click();
+// This will prevent the sw from restarting
+let keepAlive = () => {
+  keepAlive = () => {}
+  var ping = location.href.substr(0, location.href.lastIndexOf('/')) + '/ping'
+  var interval = setInterval(() => {
+    if (sw) {
+      sw.postMessage('ping')
+    } else {
+      fetch(ping).then(res => res.text(!res.ok && clearInterval(interval)))
+    }
+  }, 10000)
+}
+
+// message event is the first thing we need to setup a listner for
+// don't want the opener to do a random timeout - instead they can listen for
+// the ready event
+// but since we need to wait for the Service Worker registration, we store the
+// message for later
+let messages = []
+window.onmessage = evt => messages.push(evt)
+
+let sw = null
+let scope = ''
+
+function registerWorker() {
+  return navigator.serviceWorker.getRegistration('./').then(swReg => {
+    return swReg || navigator.serviceWorker.register('sw.js', { scope: './' })
+  }).then(swReg => {
+    const swRegTmp = swReg.installing || swReg.waiting
+
+    scope = swReg.scope
+
+    return (sw = swReg.active) || new Promise(resolve => {
+      swRegTmp.addEventListener('statechange', fn = () => {
+        if (swRegTmp.state === 'activated') {
+          swRegTmp.removeEventListener('statechange', fn)
+          sw = swReg.active
+          resolve()
+        }
+      })
+    })
+  })
+}
+
+// Now that we have the Service Worker registered we can process messages
+function onMessage (event) {
+  let { data, ports, origin } = event
+
+  // It's important to have a messageChannel, don't want to interfere
+  // with other simultaneous downloads
+  if (!ports || !ports.length) {
+    throw new TypeError("[StreamSaver] You didn't send a messageChannel")
   }
- window._config_ = {
-   "action": "login",
-   "url": "https://login.taobao.com/member/login.jhtml?style=mini&newMini2=true&from=sm&full_redirect=false&redirectURL=https%3a%2f%2fitem.taobao.com:443/wow/z/app/tbpc/pc-detail-ssr-2025/home%2F_____tmd_____%2Fpage%2Fclose_iframe_page%3Frand%3DS3WxGHAgAt756EpznwfNzJq2AFA2qBNla3j6EINUS8We9dazM_iKElp8DwVSHZUevpC41Bx7RzivXIj9RnZgdg%26uuid%3D693bf1101aed435fc335bbc4887ecde3%26_lgt_%3D693bf1101aed435fc335bbc4887ecde3___343980___ba5792080b665a796e21155d22d17d00___eaebc79cac1eb5d2f7d8b4595e00ec73344a42d5a0b8cf56539c823cd24ac06cf42c5e6b9d1da8d8130e201f9849b0997f0418a4de098dea749dafdfe0e6966472320b3927478d0faa500490975ba6d403e8e8ce287a5edcff689a7c95f43f619c6d536cfe8c62332c022d3bda061abe118969ca3aeb6e1971ce584a9d982be9ec124ba4ef32bb2b4938b3a33bab981723e4168b1e3193a2ba30fde17790e4190e9894bec1dee02be6c37439eaeaaf281cfee49449e900ac1c8f7acc2cdacde35829692f524e8aa836c9753b193cf7defd035ed85718cba868e8ba1a74ab6ecc4f577549a96e3db10daaf43b1b7c335af42c5e6b9d1da8d8130e201f9849b0997f0418a4de098dea749dafdfe0e6966472320b3927478d0faa500490975ba6d4ddb2b6c69588eb317386a772a14546df4de603b43929f1e19c0732370e8abe99d815335da42d7fb161fd014b686b43d4",
-   "h5url": "https://login.m.taobao.com/login.htm?from=sm&ttid=h5@iframe&redirectURL=https%3a%2f%2fitem.taobao.com:443/wow/z/app/tbpc/pc-detail-ssr-2025/home%2F_____tmd_____%2Fpage%2Fclose_iframe_page%3Frand%3DS3WxGHAgAt756EpznwfNzJq2AFA2qBNla3j6EINUS8We9dazM_iKElp8DwVSHZUevpC41Bx7RzivXIj9RnZgdg%26uuid%3D693bf1101aed435fc335bbc4887ecde3%26_lgt_%3D693bf1101aed435fc335bbc4887ecde3___343980___ba5792080b665a796e21155d22d17d00___eaebc79cac1eb5d2f7d8b4595e00ec73344a42d5a0b8cf56539c823cd24ac06cf42c5e6b9d1da8d8130e201f9849b0997f0418a4de098dea749dafdfe0e6966472320b3927478d0faa500490975ba6d403e8e8ce287a5edcff689a7c95f43f619c6d536cfe8c62332c022d3bda061abe118969ca3aeb6e1971ce584a9d982be9ec124ba4ef32bb2b4938b3a33bab981723e4168b1e3193a2ba30fde17790e4190e9894bec1dee02be6c37439eaeaaf281cfee49449e900ac1c8f7acc2cdacde35829692f524e8aa836c9753b193cf7defd035ed85718cba868e8ba1a74ab6ecc4f577549a96e3db10daaf43b1b7c335af42c5e6b9d1da8d8130e201f9849b0997f0418a4de098dea749dafdfe0e6966472320b3927478d0faa500490975ba6d4ddb2b6c69588eb317386a772a14546df4de603b43929f1e19c0732370e8abe99d815335da42d7fb161fd014b686b43d4",
-   "dialogSize": {"width": "", "height": ""}
-};
+
+  if (typeof data !== 'object') {
+    throw new TypeError("[StreamSaver] You didn't send a object")
+  }
+
+  // the default public service worker for StreamSaver is shared among others.
+  // so all download links needs to be prefixed to avoid any other conflict
+  data.origin = origin
+
+  // if we ever (in some feature versoin of streamsaver) would like to
+  // redirect back to the page of who initiated a http request
+  data.referrer = data.referrer || document.referrer || origin
+
+  // pass along version for possible backwards compatibility in sw.js
+  data.streamSaverVersion = new URLSearchParams(location.search).get('version')
+
+  if (data.streamSaverVersion === '1.2.0') {
+    console.warn('[StreamSaver] please update streamsaver')
+  }
+
+  /** @since v2.0.0 */
+  if (!data.headers) {
+    console.warn("[StreamSaver] pass `data.headers` that you would like to pass along to the service worker\nit should be a 2D array or a key/val object that fetch's Headers api accepts")
+  } else {
+    // test if it's correct
+    // should thorw a typeError if not
+    new Headers(data.headers)
+  }
+
+  /** @since v2.0.0 */
+  if (typeof data.filename === 'string') {
+    console.warn("[StreamSaver] You shouldn't send `data.filename` anymore. It should be included in the Content-Disposition header option")
+    // Do what File constructor do with fileNames
+    data.filename = data.filename.replace(/\//g, ':')
+  }
+
+  /** @since v2.0.0 */
+  if (data.size) {
+    console.warn("[StreamSaver] You shouldn't send `data.size` anymore. It should be included in the content-length header option")
+  }
+
+  /** @since v2.0.0 */
+  if (data.readableStream) {
+    console.warn("[StreamSaver] You should send the readableStream in the messageChannel, not throught mitm")
+  }
+
+  /** @since v2.0.0 */
+  if (!data.pathname) {
+    console.warn("[StreamSaver] Please send `data.pathname` (eg: /pictures/summer.jpg)")
+    data.pathname = Math.random().toString().slice(-6) + '/' + data.filename
+  }
+
+  // remove all leading slashes
+  data.pathname = data.pathname.replace(/^\/+/g, '')
+
+  // remove protocol
+  let org = origin.replace(/(^\w+:|^)\/\//, '')
+
+  // set the absolute pathname to the download url.
+  data.url = new URL(`${scope + org}/${data.pathname}`).toString()
+
+  if (!data.url.startsWith(`${scope + org}/`)) {
+    throw new TypeError('[StreamSaver] bad `data.pathname`')
+  }
+
+  // This sends the message data as well as transferring
+  // messageChannel.port2 to the service worker. The service worker can
+  // then use the transferred port to reply via postMessage(), which
+  // will in turn trigger the onmessage handler on messageChannel.port1.
+
+  const transferable = data.readableStream
+    ? [ ports[0], data.readableStream ]
+    : [ ports[0] ]
+
+  if (!(data.readableStream || data.transferringReadable)) {
+    keepAlive()
+  }
+
+  return sw.postMessage(data, transferable)
+}
+
+if (window.opener) {
+  // The opener can't listen to onload event, so we need to help em out!
+  // (telling them that we are ready to accept postMessage's)
+  window.opener.postMessage('StreamSaver::loadedPopup', '*')
+}
+
+if (navigator.serviceWorker) {
+  registerWorker().then(() => {
+    window.onmessage = onMessage
+    messages.forEach(window.onmessage)
+  })
+}
+
+// FF v102 just started to supports transferable streams, but still needs to ping sw.js
+// even tough the service worker dose not have to do any kind of work and listen to any
+// messages... #305
+keepAlive()
+
 </script>
-<!--rgv587_flag:sm-->
